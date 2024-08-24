@@ -27,7 +27,7 @@ GST_DEBUG_CATEGORY_EXTERN(gst_s3_sink_debug);
 
 typedef struct _GstS3MultipartUploader GstS3MultipartUploader;
 
-GstS3Uploader * gst_s3_multipart_uploader_new (const GstS3UploaderConfig * config);
+GstS3Uploader * gst_s3_multipart_uploader_new (const GstS3Config * config);
 
 G_END_DECLS
 

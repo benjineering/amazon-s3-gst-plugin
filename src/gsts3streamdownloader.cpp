@@ -1,23 +1,5 @@
-/* amazon-s3-gst-plugin
- * Copyright (C) 2019 Amazon <mkolny@amazon.com>
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
- * Boston, MA 02110-1301, USA.
- */
-
-#include "gsts3multipartuploader.h"
+// benjineering 👍
+#include "gsts3streamdownloader.h"
 
 #include "gstawscredentials.hpp"
 
@@ -29,11 +11,11 @@
 #include <aws/core/utils/logging/LogSystemInterface.h>
 #include <aws/core/utils/ResourceManager.h>
 #include <aws/core/utils/stream/PreallocatedStreamBuf.h>
-#include <aws/s3/model/CompleteMultipartUploadRequest.h>
-#include <aws/s3/model/CreateMultipartUploadRequest.h>
+#include <aws/s3/model/CompleteMultipartDownloadRequest.h>
+#include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/GetBucketLocationRequest.h>
 #include <aws/s3/model/GetBucketLocationResult.h>
-#include <aws/s3/model/UploadPartRequest.h>
+#include <aws/s3/model/DownloadPartRequest.h>
 #include <aws/s3/S3Client.h>
 #include <aws/s3/S3ClientConfiguration.h>
 #include <aws/sts/model/AssumeRoleRequest.h>
@@ -221,7 +203,7 @@ public:
         _md5_hash = std::move(md5_hash);
     }
 
-    bool verify_upload_outcome(const Aws::S3::Model::UploadPartOutcome& outcome) const
+    bool verify_download_outcome(const Aws::S3::Model::DownloadPartOutcome& outcome) const
     {
         Aws::StringStream ss;
         ss << "\"" << Aws::Utils::HashingUtils::HexEncode(_md5_hash) << "\"";
@@ -262,7 +244,7 @@ public:
         _insert(_parts_completed, part_number, std::move(state));
 
         l.unlock();
-        _upload_completed_cv.notify_one();
+        _download_completed_cv.notify_one();
     }
 
     void mark_part_as_failed(int part_number)
@@ -273,7 +255,7 @@ public:
         _parts_in_flight.erase(part_number);
 
         l.unlock();
-        _upload_completed_cv.notify_one();
+        _download_completed_cv.notify_one();
     }
 
     size_t get_failed_parts_count() const
@@ -281,20 +263,20 @@ public:
         return _parts_failed.size();
     }
 
-    bool verify_upload_outcome(int part_number, const Aws::S3::Model::UploadPartOutcome& outcome) const
+    bool verify_download_outcome(int part_number, const Aws::S3::Model::DownloadPartOutcome& outcome) const
     {
         if (!_verify_hash)
         {
             return true;
         }
         std::lock_guard<std::mutex> l(_mtx);
-        return _parts_completed.at(part_number).verify_upload_outcome(outcome);
+        return _parts_completed.at(part_number).verify_download_outcome(outcome);
     }
 
     void wait_for_complete()
     {
         std::unique_lock<std::mutex> lk(_mtx);
-        _upload_completed_cv.wait(lk, [this] { return _parts_in_flight.empty(); });
+        _download_completed_cv.wait(lk, [this] { return _parts_in_flight.empty(); });
     }
 
     PartStateMap get_completed_parts() const
@@ -317,7 +299,7 @@ private:
         map.insert(std::make_pair(number, std::move(part)));
     }
 
-    std::condition_variable _upload_completed_cv;
+    std::condition_variable _download_completed_cv;
     mutable std::mutex _mtx;
 
     PartStateMap _parts_in_flight;
@@ -327,10 +309,10 @@ private:
     bool _verify_hash;
 };
 
-class MultipartUploaderContext : public Aws::Client::AsyncCallerContext
+class StreamDownloaderContext : public Aws::Client::AsyncCallerContext
 {
 public:
-    MultipartUploaderContext(std::shared_ptr<PartStateCollection> states, std::shared_ptr<BufferManager> buffer_manager, int part_number) :
+    StreamDownloaderContext(std::shared_ptr<PartStateCollection> states, std::shared_ptr<BufferManager> buffer_manager, int part_number) :
         _part_states(std::move(states)),
         _buffer_manager(std::move(buffer_manager)),
         _part_number(part_number)
@@ -358,44 +340,44 @@ private:
     int _part_number;
 };
 
-class MultipartUploader
+class StreamDownloader
 {
 public:
-    static std::unique_ptr<MultipartUploader> create(const GstS3Config *config)
+    static std::unique_ptr<StreamDownloader> create(const GstS3Config *config)
     {
-        auto uploader = std::unique_ptr<MultipartUploader>(new MultipartUploader(config));
-        if (!uploader->_init_uploader(config))
+        auto downloader = std::unique_ptr<StreamDownloader>(new StreamDownloader(config));
+        if (!downloader->_init_downloader(config))
         {
             return nullptr;
         }
-        return uploader;
+        return downloader;
     }
 
-    ~MultipartUploader();
+    ~StreamDownloader();
 
-    bool upload(const char* data, size_t size);
+    bool download(const char* data, size_t size);
     bool complete();
 
 private:
-    explicit MultipartUploader(const GstS3Config *config);
-    bool _init_uploader(const GstS3Config * config);
+    explicit StreamDownloader(const GstS3Config *config);
+    bool _init_downloader(const GstS3Config * config);
 
     void _init_buffer_manager(size_t buffer_count, size_t buffer_size);
 
     std::unique_ptr<Aws::IOStream> _create_stream(const char* data, size_t size);
 
-    static void _handle_upload_completed(const Aws::S3::S3Client*, const Aws::S3::Model::UploadPartRequest&, const Aws::S3::Model::UploadPartOutcome& outcome, const std::shared_ptr<const Aws::Client::AsyncCallerContext>& ctx);
+    static void _handle_download_completed(const Aws::S3::S3Client*, const Aws::S3::Model::DownloadPartRequest&, const Aws::S3::Model::DownloadPartOutcome& outcome, const std::shared_ptr<const Aws::Client::AsyncCallerContext>& ctx);
 
     Aws::String _bucket;
     Aws::String _key;
     Aws::S3::Model::ObjectCannedACL _acl;
 
-    Aws::S3::Model::CreateMultipartUploadOutcome _upload_outcome;
+    Aws::S3::Model::GetObjectOutcome _download_outcome;
 
     std::shared_ptr<AwsApiHandle> _api_handle;
     std::unique_ptr<Aws::S3::S3Client> _s3_client;
 
-    std::condition_variable _upload_completed_cv;
+    std::condition_variable _download_completed_cv;
     std::shared_ptr<PartStateCollection> _part_states;
 
     std::shared_ptr<BufferManager> _buffer_manager;
@@ -415,7 +397,7 @@ private:
 //          or we have to rely on stable internet connection and run tests with credentials that allow
 //          uploading/downloading files from S3.
 
-MultipartUploader::MultipartUploader(const GstS3Config *config) :
+StreamDownloader::StreamDownloader(const GstS3Config *config) :
     _bucket(std::move(get_bucket_from_config(config))),
     _key(std::move(get_key_from_config(config))),
     _api_handle(config->init_aws_sdk ? AwsApiHandle::GetHandle() : nullptr),
@@ -423,7 +405,7 @@ MultipartUploader::MultipartUploader(const GstS3Config *config) :
 {
 }
 
-MultipartUploader::~MultipartUploader()
+StreamDownloader::~StreamDownloader()
 {
     if (_buffer_manager)
     {
@@ -434,7 +416,7 @@ MultipartUploader::~MultipartUploader()
     }
 }
 
-void MultipartUploader::_init_buffer_manager(size_t buffer_count, size_t buffer_size)
+void StreamDownloader::_init_buffer_manager(size_t buffer_count, size_t buffer_size)
 {
     _buffer_manager = std::make_shared<BufferManager>();
     _buffer_count = buffer_count;
@@ -445,7 +427,7 @@ void MultipartUploader::_init_buffer_manager(size_t buffer_count, size_t buffer_
     }
 }
 
-bool MultipartUploader::_init_uploader(const GstS3Config * config)
+bool StreamDownloader::_init_downloader(const GstS3Config * config)
 {
     Aws::S3::S3ClientConfiguration client_config;
     if (!is_null_or_empty(config->ca_file))
@@ -497,30 +479,25 @@ bool MultipartUploader::_init_uploader(const GstS3Config * config)
 
     _init_buffer_manager(config->buffer_count, config->buffer_size);
 
-    Aws::S3::Model::CreateMultipartUploadRequest upload_request;
-    upload_request.SetBucket(_bucket);
-    upload_request.SetKey(_key);
-
-    if (!is_null_or_empty(config->acl))
-    {
-        _acl = Aws::S3::Model::ObjectCannedACLMapper::GetObjectCannedACLForName(Aws::String(config->acl));
-        upload_request.SetACL(_acl);
-    }
+    Aws::S3::Model::GetObjectRequest download_request;
+    download_request.SetBucket(_bucket);
+    download_request.SetKey(_key);
 
     if (is_null_or_empty(config->content_type))
     {
-        upload_request.SetContentType("application/octet-stream");
+        download_request.SetContentType("application/octet-stream");
     }
     else
     {
-        upload_request.SetContentType(config->content_type);
+        download_request.SetContentType(config->content_type);
     }
 
-    _upload_outcome = _s3_client->CreateMultipartUpload(upload_request);
-    return _upload_outcome.IsSuccess();
+    _download_outcome = _s3_client->GetObject(download_request);
+    return _download_outcome.IsSuccess();
 }
 
-std::unique_ptr<Aws::IOStream> MultipartUploader::_create_stream(const char* data, size_t size)
+// TODO: BW fix this
+std::unique_ptr<Aws::IOStream> StreamDownloader::_create_stream(const char* data, size_t size)
 {
     auto buffer = _buffer_manager->Acquire();
     memcpy(buffer, data, size);
@@ -529,12 +506,13 @@ std::unique_ptr<Aws::IOStream> MultipartUploader::_create_stream(const char* dat
         new Aws::IOStream(new Aws::Utils::Stream::PreallocatedStreamBuf(buffer, size)));
 }
 
-bool MultipartUploader::upload(const char* data, size_t size)
+// TODO: BW fix this
+bool StreamDownloader::download(const char* data, size_t size)
 {
     int part_number = ++_part_counter;
 
     std::shared_ptr<Aws::IOStream> stream = _create_stream(data, size);
-    Aws::S3::Model::UploadPartRequest request;
+    Aws::S3::Model::DownloadPartRequest request;
     request.WithBucket(_bucket)
         .WithKey(_key)
         .WithPartNumber(part_number)
@@ -553,18 +531,19 @@ bool MultipartUploader::upload(const char* data, size_t size)
 
     _part_states->start(std::move(part_state));
 
-    auto context = std::make_shared<MultipartUploaderContext>(_part_states, _buffer_manager, part_number);
+    auto context = std::make_shared<StreamDownloaderContext>(_part_states, _buffer_manager, part_number);
 
     _s3_client->UploadPartAsync(request, _handle_upload_completed, context);
 
     return true;
 }
 
-bool MultipartUploader::complete()
+// TODO: BW fix this - do we need it?
+bool StreamDownloader::complete()
 {
     _part_states->wait_for_complete();
 
-    Aws::S3::Model::CompletedMultipartUpload completed_multipart_upload;
+    Aws::S3::Model::CompletedMultipartDownload completed_multipart_download;
     for (const auto& part : _part_states->get_completed_parts())
     {
         Aws::S3::Model::CompletedPart completed_part;
@@ -576,7 +555,7 @@ bool MultipartUploader::complete()
     size_t parts_failed_count = _part_states->get_failed_parts_count();
     _part_states->clear();
 
-    Aws::S3::Model::CompleteMultipartUploadRequest upload_request;
+    Aws::S3::Model::CompleteMultipartDownloadRequest upload_request;
     upload_request.SetBucket(_bucket);
     upload_request.SetKey(_key);
     upload_request.SetUploadId(_upload_outcome.GetResult().GetUploadId());
@@ -586,12 +565,13 @@ bool MultipartUploader::complete()
     return parts_failed_count == 0 && _s3_client->CompleteMultipartUpload(upload_request).IsSuccess();
 }
 
-void MultipartUploader::_handle_upload_completed(const Aws::S3::S3Client*,
-    const Aws::S3::Model::UploadPartRequest& request,
-    const Aws::S3::Model::UploadPartOutcome& outcome,
+// TODO: BW fix this
+void StreamDownloader::_handle_download_completed(const Aws::S3::S3Client*,
+    const Aws::S3::Model::DownloadPartRequest& request,
+    const Aws::S3::Model::DownloadPartOutcome& outcome,
     const std::shared_ptr<const Aws::Client::AsyncCallerContext>& ctx)
 {
-    auto context = std::static_pointer_cast<const MultipartUploaderContext>(ctx);
+    auto context = std::static_pointer_cast<const StreamDownloaderContext>(ctx);
 
     auto original_stream_buffer = (Aws::Utils::Stream::PreallocatedStreamBuf*)request.GetBody()->rdbuf();
     context->get_buffer_manager()->Release(original_stream_buffer->GetBuffer());
@@ -614,63 +594,63 @@ void MultipartUploader::_handle_upload_completed(const Aws::S3::S3Client*,
 } // namespace aws
 } // namespace gst
 
-#define MULTIPART_UPLOADER_(uploader) reinterpret_cast<GstS3MultipartUploader*>(uploader)
+#define STREAM_DOWNLOADER_(downloader) reinterpret_cast<GstS3StreamDownloader*>(downloader)
 
-using gst::aws::s3::MultipartUploader;
+using gst::aws::s3::StreamDownloader;
 
-struct _GstS3MultipartUploader
+struct _GstS3StreamDownloader
 {
-  GstS3Uploader base;
-  std::unique_ptr<MultipartUploader> impl;
+  GstS3Downloader base;
+  std::unique_ptr<StreamDownloader> impl;
 
-  _GstS3MultipartUploader(std::unique_ptr<MultipartUploader> impl);
+  _GstS3StreamDownloader(std::unique_ptr<StreamDownloader> impl);
 };
 
 static void
-gst_s3_multipart_uploader_destroy (GstS3Uploader * uploader)
+gst_s3_stream_downloader_destroy (GstS3Downloader * downloader)
 {
   delete
-  MULTIPART_UPLOADER_ (uploader);
+  STREAM_DOWNLOADER_ (downloader);
 }
 
 static gboolean
-gst_s3_multipart_uploader_upload_part (GstS3Uploader *
-    uploader, const gchar * buffer, gsize size)
+gst_s3_stream_downloader_download_part (GstS3Downloader *
+    downloader, const gchar * buffer, gsize size)
 {
-  GstS3MultipartUploader *self = MULTIPART_UPLOADER_ (uploader);
+  GstS3StreamDownloader *self = STREAM_DOWNLOADER_ (downloader);
   g_return_val_if_fail (self && self->impl, FALSE);
-  return self->impl->upload (buffer, size);
+  return self->impl->download (buffer, size);
 }
 
 static gboolean
-gst_s3_multipart_uploader_complete (GstS3Uploader * uploader)
+gst_s3_stream_downloader_complete (GstS3Downloader * downloader)
 {
-  GstS3MultipartUploader *self = MULTIPART_UPLOADER_ (uploader);
+  GstS3StreamDownloader *self = STREAM_DOWNLOADER_ (downloader);
   g_return_val_if_fail (self && self->impl, FALSE);
   return self->impl->complete ();
 }
-static GstS3UploaderClass default_class = {
-  gst_s3_multipart_uploader_destroy,
-  gst_s3_multipart_uploader_upload_part,
-  gst_s3_multipart_uploader_complete
+static GstS3DownloaderClass default_class = {
+  gst_s3_stream_downloader_destroy,
+  gst_s3_stream_downloader_download_part,
+  gst_s3_stream_downloader_complete
 };
 
-GstS3Uploader *
-gst_s3_multipart_uploader_new (const GstS3Config * config)
+GstS3Downloader *
+gst_s3_stream_downloader_new (const GstS3Config * config)
 {
   g_return_val_if_fail (config, NULL);
 
-  auto impl = MultipartUploader::create(config);
+  auto impl = StreamDownloader::create(config);
 
   if (!impl)
   {
     return NULL;
   }
 
-  return reinterpret_cast < GstS3Uploader * >(new GstS3MultipartUploader (std::move (impl)));
+  return reinterpret_cast < GstS3Downloader * >(new GstS3StreamDownloader (std::move (impl)));
 }
 
-_GstS3MultipartUploader::_GstS3MultipartUploader(std::unique_ptr<MultipartUploader> impl) :
+_GstS3StreamDownloader::_GstS3StreamDownloader(std::unique_ptr<StreamDownloader> impl) :
     impl(std::move(impl))
 {
   base.klass = &default_class;

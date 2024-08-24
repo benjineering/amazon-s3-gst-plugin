@@ -30,13 +30,13 @@ G_BEGIN_DECLS
 #define GST_TYPE_S3_SINK \
   (gst_s3_sink_get_type())
 #define GST_S3_SINK(obj) \
-  (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_S3_SINK,GstS3Sink))
+  (G_TYPE_CHECK_INSTANCE_CAST((obj), GST_TYPE_S3_SINK, GstS3Sink))
 #define GST_S3_SINK_CLASS(klass) \
-  (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_S3_SINK,GstS3SinkClass))
+  (G_TYPE_CHECK_CLASS_CAST((klass), GST_TYPE_S3_SINK, GstS3SinkClass))
 #define GST_IS_S3_SINK(obj) \
-  (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_S3_SINK))
+  (G_TYPE_CHECK_INSTANCE_TYPE((obj), GST_TYPE_S3_SINK))
 #define GST_IS_S3_SINK_CLASS(klass) \
-  (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_S3_SINK))
+  (G_TYPE_CHECK_CLASS_TYPE((klass), GST_TYPE_S3_SINK))
 #define GST_S3_SINK_CAST(obj) ((GstS3Sink *)(obj))
 typedef struct _GstS3Sink GstS3Sink;
 typedef struct _GstS3SinkClass GstS3SinkClass;
@@ -46,11 +46,12 @@ typedef struct _GstS3SinkClass GstS3SinkClass;
  *
  * Opaque #GstS3Sink structure.
  */
-struct _GstS3Sink {
+struct _GstS3Sink
+{
   GstBaseSink parent;
 
   /*< private > */
-  GstS3UploaderConfig config;
+  GstS3Config config;
 
   GstS3Uploader *uploader;
 
@@ -61,12 +62,13 @@ struct _GstS3Sink {
   gboolean is_started;
 };
 
-struct _GstS3SinkClass {
+struct _GstS3SinkClass
+{
   GstBaseSinkClass parent_class;
 };
 
 GST_EXPORT
-GType gst_s3_sink_get_type (void);
+GType gst_s3_sink_get_type(void);
 
 G_END_DECLS
 

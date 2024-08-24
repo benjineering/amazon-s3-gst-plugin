@@ -21,30 +21,33 @@
 
 #include <glib.h>
 
-#include "gsts3uploaderconfig.h"
+#include "gsts3config.h"
 
 G_BEGIN_DECLS
 
 typedef struct _GstS3Uploader GstS3Uploader;
 
-typedef struct {
-  void (*destroy) (GstS3Uploader *);
-  gboolean (*upload_part) (GstS3Uploader *, const gchar *, gsize);
-  gboolean (*complete) (GstS3Uploader *);
+typedef struct
+{
+  void (*destroy)(GstS3Uploader *);
+  gboolean (*upload_part)(GstS3Uploader *, const gchar *, gsize);
+  gboolean (*complete)(GstS3Uploader *);
 } GstS3UploaderClass;
 
-struct _GstS3Uploader {
+struct _GstS3Uploader
+{
   GstS3UploaderClass *klass;
 };
 
-GstS3Uploader *gst_s3_uploader_new_default (const GstS3UploaderConfig * config);
+GstS3Uploader *gst_s3_uploader_new_default(const GstS3Config *config);
 
-void gst_s3_uploader_destroy (GstS3Uploader * uploader);
+void gst_s3_uploader_destroy(GstS3Uploader *uploader);
 
-gboolean gst_s3_uploader_upload_part (GstS3Uploader *
-    uploader, const gchar * buffer, gsize size);
+gboolean gst_s3_uploader_upload_part(GstS3Uploader *
+                                         uploader,
+                                     const gchar *buffer, gsize size);
 
-gboolean gst_s3_uploader_complete (GstS3Uploader * uploader);
+gboolean gst_s3_uploader_complete(GstS3Uploader *uploader);
 
 G_END_DECLS
 

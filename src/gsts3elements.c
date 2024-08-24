@@ -24,18 +24,18 @@
 #include "gsts3sink.h"
 
 static gboolean
-plugin_init (GstPlugin * plugin)
+plugin_init(GstPlugin *plugin)
 {
-  if (!gst_element_register (plugin, "s3sink", GST_RANK_NONE,
-          gst_s3_sink_get_type ()))
+  if (!gst_element_register(plugin, "s3sink", GST_RANK_NONE,
+                            gst_s3_sink_get_type()))
     return FALSE;
 
   return TRUE;
 }
 
-GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
-    GST_VERSION_MINOR,
-    s3elements,
-    "Amazon S3 elements",
-    plugin_init,
-    VERSION, "LGPL", "GStreamer S3 package", "https://www.amazon.com")
+GST_PLUGIN_DEFINE(GST_VERSION_MAJOR,
+                  GST_VERSION_MINOR,
+                  s3elements,
+                  "Amazon S3 elements",
+                  plugin_init,
+                  VERSION, "LGPL", "GStreamer S3 package", "https://www.amazon.com")
